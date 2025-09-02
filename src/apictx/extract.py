@@ -61,14 +61,17 @@ def _parse_docstring_raises(doc: str | None) -> tuple[str, ...]:
             i += 1
             while i < len(lines):
                 sub = lines[i]
-                if sub.strip() == "":
+                stripped = sub.strip()
+                if stripped == "":
                     i += 1
                     continue
-                if not (sub.startswith(" ") or sub.startswith("\t") or sub.lstrip().startswith("- ")):
+                # Stop if we hit another section header like "Args:" or similar
+                if stripped.endswith(":") and " " not in stripped:
                     break
-                text = sub.strip().lstrip("- ")
-                # Expect formats like "ValidationError: ..." or just "ValidationError"
-                name = text.split(":", 1)[0].strip()
+                # Accept bullets, indented or not
+                text = stripped.lstrip("- ")
+                # Expect formats like "ValueError: details" or just "ValueError"
+                name = text.split(":", 1)[0].split()[0]
                 if name:
                     names.append(name)
                 i += 1
@@ -129,17 +132,17 @@ def _decorators_from_class(defn: cst.ClassDef) -> tuple[str, ...]:
 
 def _is_exception_class(bases: tuple[str, ...]) -> bool:
     lowered = tuple(b.lower() for b in bases)
-    return any("exception" in b or b.endswith("BaseException") for b in lowered)
+    return any("exception" in b or b.endswith("baseexception") for b in lowered)
 
 
 def _is_enum_class(bases: tuple[str, ...]) -> bool:
     lowered = tuple(b.lower() for b in bases)
-    return any(b.endswith("enum.Enum") or b.endswith("Enum") for b in lowered)
+    return any(b.endswith("enum.enum") or b.endswith("enum") for b in lowered)
 
 
 def _is_protocol_class(bases: tuple[str, ...]) -> bool:
     lowered = tuple(b.lower() for b in bases)
-    return any(b.endswith("typing.Protocol") or b.endswith("Protocol") for b in lowered)
+    return any(b.endswith("typing.protocol") or b.endswith("protocol") for b in lowered)
 
 
 def _constant_from_assign(name: str, owner_fqn: str, type_str: str | None, value_str: str | None) -> ConstantSymbol:
@@ -169,9 +172,15 @@ def extract_module(module: cst.Module, module_fqn: str) -> tuple[Symbol, ...]:
             if isinstance(small, cst.AnnAssign):
                 if isinstance(small.target, cst.Name):
                     name = small.target.value
-                    type_str = _EMPTY_MODULE.code_for_node(small.annotation.annotation)
-                    value_str = _EMPTY_MODULE.code_for_node(small.value) if small.value is not None else None
-                    out.append(_constant_from_assign(name, owner_fqn, type_str, value_str))
+                    ann_str = _EMPTY_MODULE.code_for_node(small.annotation.annotation)
+                    # Detect typing TypeAlias via annotation (PEP 613 style): Name or qualified Name ending with TypeAlias
+                    if ann_str.split(".")[-1] == "TypeAlias" and small.value is not None:
+                        target = _EMPTY_MODULE.code_for_node(small.value)
+                        out.append(TypeAliasSymbol(kind="type_alias", fqn=f"{owner_fqn}.{name}", target=target))
+                    else:
+                        type_str = ann_str
+                        value_str = _EMPTY_MODULE.code_for_node(small.value) if small.value is not None else None
+                        out.append(_constant_from_assign(name, owner_fqn, type_str, value_str))
             elif isinstance(small, cst.Assign):
                 # Only handle single-target simple names for constants
                 if len(small.targets) == 1 and isinstance(small.targets[0].target, cst.Name):
