@@ -2,24 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://example.com/apictx.schema.json",
   "title": "API Context Schema",
-  "type": "object",
-  "required": ["kind", "fqn"],
-  "properties": {
-    "kind": {"type": "string", "enum": ["module", "function"]},
-    "fqn": {"type": "string"},
-    "docstring": {"type": ["string", "null"]},
-    "parameters": {
-      "type": "array",
-      "items": {"$ref": "#/definitions/parameter"}
-    },
-    "returns": {"type": ["string", "null"]},
-    "decorators": {
-      "type": "array",
-      "items": {"type": "string"}
-    },
-    "visibility": {"type": "string", "enum": ["public", "private"]},
-    "deprecated": {"type": "boolean"}
-  },
+  "x-apictx-schema-version": "0.2.0",
   "definitions": {
     "parameter": {
       "type": "object",
@@ -29,7 +12,115 @@
         "type": {"type": "string"}
       },
       "additionalProperties": false
+    },
+    "module": {
+      "type": "object",
+      "required": ["kind", "fqn", "docstring"],
+      "properties": {
+        "kind": {"const": "module"},
+        "fqn": {"type": "string"},
+        "docstring": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "function": {
+      "type": "object",
+      "required": [
+        "kind",
+        "fqn",
+        "parameters",
+        "returns",
+        "docstring",
+        "decorators",
+        "visibility",
+        "deprecated",
+        "is_async",
+        "owner",
+        "is_classmethod",
+        "is_staticmethod",
+        "is_property",
+        "raises",
+        "overload_of"
+      ],
+      "properties": {
+        "kind": {"const": "function"},
+        "fqn": {"type": "string"},
+        "parameters": {"type": "array", "items": {"$ref": "#/definitions/parameter"}},
+        "returns": {"type": ["string", "null"]},
+        "docstring": {"type": ["string", "null"]},
+        "decorators": {"type": "array", "items": {"type": "string"}},
+        "visibility": {"type": "string", "enum": ["public", "private"]},
+        "deprecated": {"type": "boolean"},
+        "is_async": {"type": "boolean"},
+        "owner": {"type": ["string", "null"]},
+        "is_classmethod": {"type": "boolean"},
+        "is_staticmethod": {"type": "boolean"},
+        "is_property": {"type": "boolean"},
+        "raises": {"type": "array", "items": {"type": "string"}},
+        "overload_of": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "class": {
+      "type": "object",
+      "required": [
+        "kind",
+        "fqn",
+        "docstring",
+        "decorators",
+        "visibility",
+        "deprecated",
+        "bases",
+        "base_fqns",
+        "is_exception",
+        "is_enum",
+        "is_protocol"
+      ],
+      "properties": {
+        "kind": {"const": "class"},
+        "fqn": {"type": "string"},
+        "docstring": {"type": ["string", "null"]},
+        "decorators": {"type": "array", "items": {"type": "string"}},
+        "visibility": {"type": "string", "enum": ["public", "private"]},
+        "deprecated": {"type": "boolean"},
+        "bases": {"type": "array", "items": {"type": "string"}},
+        "base_fqns": {"type": "array", "items": {"type": "string"}},
+        "is_exception": {"type": "boolean"},
+        "is_enum": {"type": "boolean"},
+        "is_protocol": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "constant": {
+      "type": "object",
+      "required": ["kind", "fqn", "owner", "type", "value", "visibility", "deprecated"],
+      "properties": {
+        "kind": {"const": "constant"},
+        "fqn": {"type": "string"},
+        "owner": {"type": "string"},
+        "type": {"type": ["string", "null"]},
+        "value": {"type": ["string", "null"]},
+        "visibility": {"type": "string", "enum": ["public", "private"]},
+        "deprecated": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "type_alias": {
+      "type": "object",
+      "required": ["kind", "fqn", "target"],
+      "properties": {
+        "kind": {"const": "type_alias"},
+        "fqn": {"type": "string"},
+        "target": {"type": "string"}
+      },
+      "additionalProperties": false
     }
   },
-  "additionalProperties": false
+  "oneOf": [
+    {"$ref": "#/definitions/module"},
+    {"$ref": "#/definitions/function"},
+    {"$ref": "#/definitions/class"},
+    {"$ref": "#/definitions/constant"},
+    {"$ref": "#/definitions/type_alias"}
+  ]
 }

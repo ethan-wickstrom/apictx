@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
@@ -14,7 +14,7 @@ import libcst as cst
 
 from .errors import Error
 from .extract import extract_module
-from .models import Symbol
+from .models import ClassSymbol, ConstantSymbol, FunctionSymbol, Symbol
 from .result import Result
 from .schema import load_schema
 
@@ -70,12 +70,35 @@ def extract(parsed: Mapping[Path, cst.Module], root: Path, package: str) -> tupl
 
 
 def link(symbols: tuple[Symbol, ...]) -> tuple[Symbol, ...]:
-    return symbols
+    # map simple name -> sorted fqns
+    name_to_fqns: dict[str, tuple[str, ...]] = {}
+    for s in symbols:
+        name = s.fqn.split(".")[-1]
+        name_to_fqns.setdefault(name, tuple())
+    # fill lists deterministically
+    for name in tuple(name_to_fqns.keys()):
+        vals = sorted([s.fqn for s in symbols if s.fqn.split(".")[-1] == name])
+        name_to_fqns[name] = tuple(vals)
+
+    linked: list[Symbol] = []
+    for s in symbols:
+        if isinstance(s, ClassSymbol):
+            resolved: list[str] = []
+            for b in s.bases:
+                candidate_name = b.split(".")[-1].strip()
+                matches = name_to_fqns.get(candidate_name, ())
+                if matches:
+                    resolved.append(matches[0])  # pick lexicographically first for stability
+            linked.append(replace(s, base_fqns=tuple(sorted(set(resolved)))))
+        else:
+            linked.append(s)
+    return tuple(linked)
 
 
 @dataclass(frozen=True, slots=True)
 class ValidationReport:
     symbol_count: int
+    missing_references: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +112,8 @@ def validate(symbols: tuple[Symbol, ...]) -> Result[ValidationOutput, tuple[Erro
     objs: list[dict[str, object]] = []
     errors: list[Error] = []
     seen: set[str] = set()
+    fqn_set: set[str] = {s.fqn for s in symbols}
+    missing_refs_count: int = 0
     for symbol in symbols:
         if symbol.fqn in seen:
             errors.append(Error(code="duplicate", message="duplicate fqn", path=symbol.fqn))
@@ -102,29 +127,72 @@ def validate(symbols: tuple[Symbol, ...]) -> Result[ValidationOutput, tuple[Erro
         except jsonschema.ValidationError as exc:
             error: Error = Error(code="schema", message=str(exc), path=symbol.fqn)
             errors.append(error)
+        # Reference closure checks for owners and base_fqns
+        if isinstance(symbol, FunctionSymbol) and symbol.owner is not None:
+            if symbol.owner not in fqn_set:
+                missing_refs_count += 1
+                errors.append(Error(code="missing_ref", message="owner not found", path=f"{symbol.fqn} -> {symbol.owner}"))
+        if isinstance(symbol, ConstantSymbol):
+            if symbol.owner not in fqn_set:
+                missing_refs_count += 1
+                errors.append(Error(code="missing_ref", message="owner not found", path=f"{symbol.fqn} -> {symbol.owner}"))
+        if isinstance(symbol, ClassSymbol):
+            for base in symbol.base_fqns:
+                if base not in fqn_set:
+                    missing_refs_count += 1
+                    errors.append(Error(code="missing_ref", message="base not found", path=f"{symbol.fqn} -> {base}"))
     if errors:
         return Result.failure(tuple(errors))
-    report: ValidationReport = ValidationReport(symbol_count=len(objs))
+    report: ValidationReport = ValidationReport(symbol_count=len(objs), missing_references=missing_refs_count)
     output: ValidationOutput = ValidationOutput(objects=tuple(objs), report=report)
     return Result.success(output)
 
 
-def index(objs: tuple[dict[str, object], ...], db_path: Path) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn: sqlite3.Connection = sqlite3.connect(db_path)
-    cur: sqlite3.Cursor = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS symbols (fqn TEXT PRIMARY KEY, kind TEXT, data TEXT)")
-    cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(fqn)")
-    for obj in objs:
-        fqn: str = str(obj["fqn"])
-        kind: str = str(obj["kind"])
-        data_str: str = json.dumps(obj, sort_keys=True)
-        cur.execute("INSERT OR REPLACE INTO symbols (fqn, kind, data) VALUES (?, ?, ?)", (fqn, kind, data_str))
-        rowid_val: int | None = cur.lastrowid
-        rowid: int = 0 if rowid_val is None else rowid_val
-        cur.execute("INSERT OR REPLACE INTO symbols_fts(rowid, fqn) VALUES (?, ?)", (rowid, fqn))
-    conn.commit()
-    conn.close()
+def _to_grams(text: str, n: int = 3) -> tuple[str, ...]:
+    s = f"^{text.lower()}$"
+    return tuple({s[i : i + n] for i in range(max(0, len(s) - n + 1))})
+
+
+def index(objs: tuple[dict[str, object], ...], db_path: Path) -> Result[None, Error]:
+    try:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn: sqlite3.Connection = sqlite3.connect(db_path)
+        cur: sqlite3.Cursor = conn.cursor()
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS symbols (id INTEGER PRIMARY KEY AUTOINCREMENT, fqn TEXT UNIQUE, name TEXT, kind TEXT, data TEXT)"
+        )
+        cur.execute("CREATE TABLE IF NOT EXISTS grams (gram TEXT, id INTEGER)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_fqn ON symbols(fqn)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_grams_gram ON grams(gram)")
+        for obj in objs:
+            fqn: str = str(obj["fqn"])
+            kind: str = str(obj["kind"])
+            name: str = fqn.split(".")[-1].lower()
+            data_str: str = json.dumps(obj, sort_keys=True)
+            # upsert symbol
+            cur.execute("SELECT id FROM symbols WHERE fqn = ?", (fqn,))
+            row = cur.fetchone()
+            if row is None:
+                cur.execute(
+                    "INSERT INTO symbols (fqn, name, kind, data) VALUES (?, ?, ?, ?)",
+                    (fqn, name, kind, data_str),
+                )
+                sid = int(cur.lastrowid)
+            else:
+                sid = int(row[0])
+                cur.execute(
+                    "UPDATE symbols SET name = ?, kind = ?, data = ? WHERE id = ?",
+                    (name, kind, data_str, sid),
+                )
+                cur.execute("DELETE FROM grams WHERE id = ?", (sid,))
+            grams = set(_to_grams(name)) | set(_to_grams(fqn))
+            cur.executemany("INSERT INTO grams (gram, id) VALUES (?, ?)", [(g, sid) for g in sorted(grams)])
+        conn.commit()
+        conn.close()
+        return Result.success(None)
+    except Exception as exc:  # noqa: BLE001
+        return Result.failure(Error(code="index", message=str(exc), path=str(db_path)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,22 +202,27 @@ class Manifest:
     commit: str
     extracted_at: str
     tool: str
-    schema: str
+    tool_version: str
+    schema_version: str
 
 
-def emit(objs: tuple[dict[str, object], ...], manifest: Manifest, report: ValidationReport, outdir: Path) -> None:
-    outdir.mkdir(parents=True, exist_ok=True)
-    jsonl_path: Path = outdir / "symbols.jsonl"
-    with jsonl_path.open("w", encoding="utf-8") as handle:
-        for obj in objs:
-            line: str = json.dumps(obj, sort_keys=True)
-            handle.write(line + "\n")
-    manifest_path: Path = outdir / "manifest.json"
-    with manifest_path.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(asdict(manifest), sort_keys=True))
-    report_path: Path = outdir / "validation.json"
-    with report_path.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(asdict(report), sort_keys=True))
+def emit(objs: tuple[dict[str, object], ...], manifest: Manifest, report: ValidationReport, outdir: Path) -> Result[None, Error]:
+    try:
+        outdir.mkdir(parents=True, exist_ok=True)
+        jsonl_path: Path = outdir / "symbols.jsonl"
+        with jsonl_path.open("w", encoding="utf-8") as handle:
+            for obj in objs:
+                line: str = json.dumps(obj, sort_keys=True)
+                handle.write(line + "\n")
+        manifest_path: Path = outdir / "manifest.json"
+        with manifest_path.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(manifest), sort_keys=True))
+        report_path: Path = outdir / "validation.json"
+        with report_path.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(report), sort_keys=True))
+        return Result.success(None)
+    except Exception as exc:  # noqa: BLE001
+        return Result.failure(Error(code="emit", message=str(exc), path=str(outdir)))
 
 
 def run_pipeline(root: Path, package: str, version: str, commit: str, workers: int, outdir: Path) -> Result[None, tuple[Error, ...]]:
@@ -172,14 +245,23 @@ def run_pipeline(root: Path, package: str, version: str, commit: str, workers: i
     output: ValidationOutput = validated.value
     objs: tuple[dict[str, object], ...] = output.objects
     db_path: Path = outdir / "index.sqlite3"
-    index(objs, db_path)
+    idx_res = index(objs, db_path)
+    if not idx_res.ok:
+        return Result.failure((idx_res.error,) if idx_res.error is not None else tuple())
+    # derive schema version from schema file if present
+    schema_data = load_schema()
+    schema_version = str(schema_data.get("x-apictx-schema-version", "unknown"))
+    from . import __version__ as TOOL_VERSION  # local import to avoid cycles at load
     manifest: Manifest = Manifest(
         package=package,
         version=version,
         commit=commit,
         extracted_at=datetime.now(UTC).isoformat(),
         tool="apictx",
-        schema="1.0",
+        tool_version=TOOL_VERSION,
+        schema_version=schema_version,
     )
-    emit(objs, manifest, output.report, outdir)
+    emit_res = emit(objs, manifest, output.report, outdir)
+    if not emit_res.ok:
+        return Result.failure((emit_res.error,) if emit_res.error is not None else tuple())
     return Result.success(None)

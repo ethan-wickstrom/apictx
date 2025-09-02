@@ -29,3 +29,37 @@ class FunctionSymbol(Symbol):
     decorators: tuple[str, ...]
     visibility: Literal["public", "private"]
     deprecated: bool
+    is_async: bool
+    owner: str | None  # class FQN if method/property
+    is_classmethod: bool
+    is_staticmethod: bool
+    is_property: bool
+    raises: tuple[str, ...]
+    overload_of: str | None  # base FQN without overload index
+
+
+@dataclass(frozen=True, slots=True)
+class ClassSymbol(Symbol):
+    docstring: str | None
+    decorators: tuple[str, ...]
+    visibility: Literal["public", "private"]
+    deprecated: bool
+    bases: tuple[str, ...]               # textual base expressions
+    base_fqns: tuple[str, ...]           # linked FQNs when resolvable
+    is_exception: bool
+    is_enum: bool
+    is_protocol: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConstantSymbol(Symbol):
+    owner: str  # module or class FQN holding the constant
+    type: str | None
+    value: str | None
+    visibility: Literal["public", "private"]
+    deprecated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TypeAliasSymbol(Symbol):
+    target: str
