@@ -287,6 +287,9 @@ def query_index(
     fqn: str | None = None,
     approx: str | None = None,
     limit: int = 10,
+    kind: str | None = None,
+    visibility: str | None = None,
+    owner: str | None = None,
 ) -> Result[tuple[dict[str, object], ...], Error]:
     try:
         conn = sqlite3.connect(db_path)
@@ -300,11 +303,13 @@ def query_index(
             grams = _to_grams(approx)
             if grams:
                 placeholders = ",".join(["?"] * len(grams))
+                # fetch a larger pool to allow post-filtering
+                pool = max(50, int(limit) * 5)
                 sql = (
                     "SELECT s.data, COUNT(*) as score FROM grams g JOIN symbols s ON s.id = g.id "
                     f"WHERE g.gram IN ({placeholders}) GROUP BY s.id ORDER BY score DESC, s.fqn ASC LIMIT ?"
                 )
-                rows = cur.execute(sql, [*grams, limit]).fetchall()
+                rows = cur.execute(sql, [*grams, pool]).fetchall()
         conn.close()
         objs: list[dict[str, object]] = []
         for row in rows:
@@ -312,9 +317,21 @@ def query_index(
             if not isinstance(data_str, str):
                 continue
             try:
-                objs.append(json.loads(data_str))
+                obj = json.loads(data_str)
             except Exception:
                 continue
+            # Apply filters
+            if kind is not None and str(obj.get("kind")) != str(kind):
+                continue
+            if visibility is not None:
+                if str(obj.get("visibility")) != str(visibility):
+                    continue
+            if owner is not None:
+                if str(obj.get("owner")) != str(owner):
+                    continue
+            objs.append(obj)
+            if len(objs) >= int(limit):
+                break
         return Result.success(tuple(objs))
     except Exception as exc:  # noqa: BLE001
         return Result.failure(Error(code="query", message=str(exc), path=str(db_path)))

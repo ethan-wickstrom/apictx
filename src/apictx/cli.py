@@ -27,6 +27,9 @@ def main() -> int:
     grp.add_argument("--fqn", help="Exact fully qualified name")
     grp.add_argument("--approx", help="Approximate name or FQN")
     p_query.add_argument("--limit", type=int, default=5)
+    p_query.add_argument("--kind", choices=["module","function","class","constant","type_alias"], help="Filter by kind")
+    p_query.add_argument("--visibility", choices=["public","private"], help="Filter by visibility")
+    p_query.add_argument("--owner", help="Filter by owner FQN")
 
     args: argparse.Namespace = parser.parse_args()
 
@@ -40,7 +43,15 @@ def main() -> int:
             print(f"{err.code}:{err.path}:{err.message}")
         return 1
     elif args.cmd == "query":
-        res = query_index(Path(args.db), fqn=args.fqn, approx=args.approx, limit=int(args.limit))
+        res = query_index(
+            Path(args.db),
+            fqn=args.fqn,
+            approx=args.approx,
+            limit=int(args.limit),
+            kind=args.kind,
+            visibility=args.visibility,
+            owner=args.owner,
+        )
         if not res.ok or res.value is None:
             err = res.error
             if err is not None:

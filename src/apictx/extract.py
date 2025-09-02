@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Iterator, Literal, Set
 from itertools import chain
+import re
 
 import libcst as cst
 
@@ -63,31 +64,68 @@ def _parse_docstring_raises(doc: str | None) -> tuple[str, ...]:
     if not doc:
         return tuple()
     names: list[str] = []
-    lines = [ln.rstrip() for ln in doc.splitlines()]
+    text = doc
+    lines = [ln.rstrip() for ln in text.splitlines()]
+
+    # 1) reST inline format: ":raises Error: details"
+    for m in re.finditer(r"(?i):raises\s+([A-Za-z_][\w\.]*)\s*:\s*", text):
+        names.append(m.group(1))
+
+    # 2) Google-style: "Raises:" then indented bullets/lines
     i = 0
     while i < len(lines):
         ln = lines[i].strip()
         if ln.lower().startswith("raises:") or ln.lower().startswith("raise:"):
             i += 1
             while i < len(lines):
-                sub = lines[i]
-                stripped = sub.strip()
+                stripped = lines[i].strip()
                 if stripped == "":
                     i += 1
                     continue
-                # Stop if we hit another section header like "Args:" or similar
                 if stripped.endswith(":") and " " not in stripped:
                     break
-                # Accept bullets, indented or not
-                text = stripped.lstrip("- ")
-                # Expect formats like "ValueError: details" or just "ValueError"
-                name = text.split(":", 1)[0].split()[0]
+                text_line = stripped.lstrip("- ")
+                name = text_line.split(":", 1)[0].split()[0]
                 if name:
                     names.append(name)
                 i += 1
             continue
         i += 1
+
+    # 3) NumPy-style section:
+    #   Raises\n-----\n  Error
+    i = 0
+    while i < len(lines):
+        ln = lines[i].strip()
+        if ln.lower() == "raises":
+            # look ahead for underline
+            j = i + 1
+            if j < len(lines) and re.fullmatch(r"[-=~`^_]{3,}", lines[j].strip()):
+                j += 1
+                while j < len(lines):
+                    stripped = lines[j].strip()
+                    if stripped == "":
+                        break
+                    text_line = stripped.lstrip("- ")
+                    name = text_line.split(":", 1)[0].split()[0]
+                    if name:
+                        names.append(name)
+                    j += 1
+                i = j
+                continue
+        i += 1
+
     return tuple(dict.fromkeys(names))
+
+
+def _docstring_is_deprecated(doc: str | None) -> bool:
+    if not doc:
+        return False
+    if re.search(r"(?i)^\s*deprecated\b", doc, re.MULTILINE):
+        return True
+    if re.search(r"(?i):deprecated:|deprecated since", doc):
+        return True
+    return False
 
 
 def _function_from_def(defn: cst.FunctionDef, parent_fqn: str | None, module_fqn: str, exported: Set[str] | None, get_loc) -> FunctionSymbol:
@@ -100,7 +138,7 @@ def _function_from_def(defn: cst.FunctionDef, parent_fqn: str | None, module_fqn
     doc: str | None = defn.get_docstring()
     decorators: tuple[str, ...] = tuple(map(_decorator_to_str, defn.decorators))
     visibility: Literal["public", "private"] = _determine_visibility(defn.name.value, None if owner is not None else exported)
-    deprecated: bool = any("deprecated" in deco for deco in decorators)
+    deprecated: bool = any("deprecated" in deco for deco in decorators) or _docstring_is_deprecated(doc)
     is_property: bool = any(d.split("(")[0].endswith("property") for d in decorators)
     is_classmethod: bool = any(d.split("(")[0].endswith("classmethod") for d in decorators)
     is_staticmethod: bool = any(d.split("(")[0].endswith("staticmethod") for d in decorators)
@@ -260,7 +298,7 @@ def extract_module(module: cst.Module, module_fqn: str, module_path: str | None 
                 docstring=stmt.get_docstring(),
                 decorators=decorators,
                 visibility=_determine_visibility(stmt.name.value),
-                deprecated=any("deprecated" in d for d in decorators),
+                deprecated=any("deprecated" in d for d in decorators) or _docstring_is_deprecated(stmt.get_docstring()),
                 bases=bases,
                 base_fqns=tuple(),
                 is_exception=_is_exception_class(bases),
