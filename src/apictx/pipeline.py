@@ -62,6 +62,7 @@ def extract(parsed: Mapping[Path, cst.Module], root: Path, package: str) -> tupl
         extract_module(
             module,
             ".".join((package, *path.relative_to(root).with_suffix("").parts)),
+            str(path),
         )
         for path, module in parsed.items()
     )

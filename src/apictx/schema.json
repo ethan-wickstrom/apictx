@@ -2,23 +2,37 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://example.com/apictx.schema.json",
   "title": "API Context Schema",
-  "x-apictx-schema-version": "0.2.0",
+  "x-apictx-schema-version": "0.3.0",
   "definitions": {
+    "location": {
+      "type": "object",
+      "required": ["path", "line", "column"],
+      "properties": {
+        "path": {"type": "string"},
+        "line": {"type": "integer"},
+        "column": {"type": "integer"}
+      },
+      "additionalProperties": false
+    },
     "parameter": {
       "type": "object",
-      "required": ["name", "type"],
+      "required": ["name", "type", "kind", "default", "required"],
       "properties": {
         "name": {"type": "string"},
-        "type": {"type": "string"}
+        "type": {"type": "string"},
+        "kind": {"type": "string", "enum": ["posonly", "pos", "kwonly", "vararg", "kwvar"]},
+        "default": {"type": ["string", "null"]},
+        "required": {"type": "boolean"}
       },
       "additionalProperties": false
     },
     "module": {
       "type": "object",
-      "required": ["kind", "fqn", "docstring"],
+      "required": ["kind", "fqn", "docstring", "location"],
       "properties": {
         "kind": {"const": "module"},
         "fqn": {"type": "string"},
+        "location": {"$ref": "#/definitions/location"},
         "docstring": {"type": ["string", "null"]}
       },
       "additionalProperties": false
@@ -28,6 +42,7 @@
       "required": [
         "kind",
         "fqn",
+        "location",
         "parameters",
         "returns",
         "docstring",
@@ -45,6 +60,7 @@
       "properties": {
         "kind": {"const": "function"},
         "fqn": {"type": "string"},
+        "location": {"$ref": "#/definitions/location"},
         "parameters": {"type": "array", "items": {"$ref": "#/definitions/parameter"}},
         "returns": {"type": ["string", "null"]},
         "docstring": {"type": ["string", "null"]},
@@ -66,6 +82,7 @@
       "required": [
         "kind",
         "fqn",
+        "location",
         "docstring",
         "decorators",
         "visibility",
@@ -79,6 +96,7 @@
       "properties": {
         "kind": {"const": "class"},
         "fqn": {"type": "string"},
+        "location": {"$ref": "#/definitions/location"},
         "docstring": {"type": ["string", "null"]},
         "decorators": {"type": "array", "items": {"type": "string"}},
         "visibility": {"type": "string", "enum": ["public", "private"]},
@@ -93,10 +111,11 @@
     },
     "constant": {
       "type": "object",
-      "required": ["kind", "fqn", "owner", "type", "value", "visibility", "deprecated"],
+      "required": ["kind", "fqn", "location", "owner", "type", "value", "visibility", "deprecated"],
       "properties": {
         "kind": {"const": "constant"},
         "fqn": {"type": "string"},
+        "location": {"$ref": "#/definitions/location"},
         "owner": {"type": "string"},
         "type": {"type": ["string", "null"]},
         "value": {"type": ["string", "null"]},
@@ -107,7 +126,7 @@
     },
     "type_alias": {
       "type": "object",
-      "required": ["kind", "fqn", "target"],
+      "required": ["kind", "fqn", "location", "target"],
       "properties": {
         "kind": {"const": "type_alias"},
         "fqn": {"type": "string"},

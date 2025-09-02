@@ -13,6 +13,7 @@ from .models import (
     Parameter,
     Symbol,
     TypeAliasSymbol,
+    Location,
 )
 
 _EMPTY_MODULE: cst.Module = cst.Module([])
@@ -24,27 +25,34 @@ def _determine_visibility(name: str, exported: Set[str] | None = None) -> Litera
     return "private" if name.startswith("_") else "public"
 
 
-def _parameter_from_node(param: cst.Param) -> Parameter:
+def _parameter_from_node(param: cst.Param, kind: Literal["posonly", "pos", "kwonly", "vararg", "kwvar"]) -> Parameter:
     annotation: str = ""
     if param.annotation is not None:
         annotation = _EMPTY_MODULE.code_for_node(param.annotation.annotation)
-    return Parameter(name=param.name.value, type=annotation)
+    default_str: str | None = None
+    if param.default is not None:
+        try:
+            default_str = _EMPTY_MODULE.code_for_node(param.default)
+        except Exception:
+            default_str = None
+    required: bool = kind in ("posonly", "pos", "kwonly") and default_str is None
+    return Parameter(name=param.name.value, type=annotation, kind=kind, default=default_str, required=required)
 
 
-def _iter_parameters(func: cst.FunctionDef) -> Iterator[cst.Param]:
-    posonly = func.params.posonly_params
-    params = func.params.params
-    kwonly = func.params.kwonly_params
-    star = func.params.star_arg
-    dstar = func.params.star_kwarg
-    parts: tuple[cst.Param, ...] = tuple(
-        p for p in chain(posonly, params, kwonly) if isinstance(p, cst.Param)
-    )
-    if isinstance(star, cst.Param):
-        parts += (star,)
-    if isinstance(dstar, cst.Param):
-        parts += (dstar,)
-    return parts
+def _iter_parameters(func: cst.FunctionDef) -> Iterator[tuple[cst.Param, Literal["posonly", "pos", "kwonly", "vararg", "kwvar"]]]:
+    for p in func.params.posonly_params:
+        if isinstance(p, cst.Param):
+            yield p, "posonly"
+    for p in func.params.params:
+        if isinstance(p, cst.Param):
+            yield p, "pos"
+    for p in func.params.kwonly_params:
+        if isinstance(p, cst.Param):
+            yield p, "kwonly"
+    if isinstance(func.params.star_arg, cst.Param):
+        yield func.params.star_arg, "vararg"
+    if isinstance(func.params.star_kwarg, cst.Param):
+        yield func.params.star_kwarg, "kwvar"
 
 
 def _decorator_to_str(deco: cst.Decorator) -> str:
@@ -82,10 +90,10 @@ def _parse_docstring_raises(doc: str | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
-def _function_from_def(defn: cst.FunctionDef, parent_fqn: str | None, module_fqn: str, exported: Set[str] | None) -> FunctionSymbol:
+def _function_from_def(defn: cst.FunctionDef, parent_fqn: str | None, module_fqn: str, exported: Set[str] | None, get_loc) -> FunctionSymbol:
     owner: str | None = parent_fqn
     base_fqn: str = f"{module_fqn}.{defn.name.value}" if owner is None else f"{owner}.{defn.name.value}"
-    params: tuple[Parameter, ...] = tuple(map(_parameter_from_node, _iter_parameters(defn)))
+    params: tuple[Parameter, ...] = tuple(_parameter_from_node(p, k) for p, k in _iter_parameters(defn))
     returns: str | None = None
     if defn.returns is not None:
         returns = _EMPTY_MODULE.code_for_node(defn.returns.annotation)
@@ -102,6 +110,7 @@ def _function_from_def(defn: cst.FunctionDef, parent_fqn: str | None, module_fqn
     return FunctionSymbol(
         kind="function",
         fqn=base_fqn,
+        location=get_loc(defn),
         parameters=params,
         returns=returns,
         docstring=doc,
@@ -147,11 +156,12 @@ def _is_protocol_class(bases: tuple[str, ...]) -> bool:
     return any(b.endswith("typing.protocol") or b.endswith("protocol") for b in lowered)
 
 
-def _constant_from_assign(name: str, owner_fqn: str, type_str: str | None, value_str: str | None, visibility: Literal["public", "private"]) -> ConstantSymbol:
+def _constant_from_assign(name: str, owner_fqn: str, type_str: str | None, value_str: str | None, visibility: Literal["public", "private"], get_loc, node: cst.CSTNode) -> ConstantSymbol:
     fqn: str = f"{owner_fqn}.{name}"
     return ConstantSymbol(
         kind="constant",
         fqn=fqn,
+        location=get_loc(node),
         owner=owner_fqn,
         type=type_str,
         value=value_str,
@@ -160,9 +170,24 @@ def _constant_from_assign(name: str, owner_fqn: str, type_str: str | None, value
     )
 
 
-def extract_module(module: cst.Module, module_fqn: str) -> tuple[Symbol, ...]:
+def extract_module(module: cst.Module, module_fqn: str, module_path: str | None = None) -> tuple[Symbol, ...]:
     module_doc: str | None = module.get_docstring()
-    mod_symbol: ModuleSymbol = ModuleSymbol(kind="module", fqn=module_fqn, docstring=module_doc)
+    from libcst.metadata import PositionProvider
+    wrapper = cst.MetadataWrapper(module)
+    pos_map = wrapper.resolve(PositionProvider)
+
+    path_str: str = module_path if module_path is not None else module_fqn
+
+    def get_loc(node: cst.CSTNode) -> Location:
+        try:
+            pos = pos_map.get(node)
+            if pos is None:
+                return Location(path=path_str, line=1, column=0)
+            return Location(path=path_str, line=int(pos.start.line), column=int(pos.start.column))
+        except Exception:
+            return Location(path=path_str, line=1, column=0)
+
+    mod_symbol: ModuleSymbol = ModuleSymbol(kind="module", fqn=module_fqn, location=get_loc(module), docstring=module_doc)
 
     # collect __all__ if present: only literal list/tuple of string constants
     def _collect_exports(mod: cst.Module) -> Set[str] | None:
@@ -197,8 +222,7 @@ def extract_module(module: cst.Module, module_fqn: str) -> tuple[Symbol, ...]:
     out: list[Symbol] = [mod_symbol]
 
     def handle_function(defn: cst.FunctionDef, parent_fqn: str | None) -> None:
-        out.append(_function_from_def(defn, parent_fqn, module_fqn, exported_names))
-
+        out.append(_function_from_def(defn, parent_fqn, module_fqn, exported_names, get_loc))
     def handle_simple_stmt(stmt: cst.SimpleStatementLine, owner_fqn: str) -> None:
         for small in stmt.body:
             if isinstance(small, cst.AnnAssign):
@@ -208,19 +232,19 @@ def extract_module(module: cst.Module, module_fqn: str) -> tuple[Symbol, ...]:
                     # Detect typing TypeAlias via annotation (PEP 613 style): Name or qualified Name ending with TypeAlias
                     if ann_str.split(".")[-1] == "TypeAlias" and small.value is not None:
                         target = _EMPTY_MODULE.code_for_node(small.value)
-                        out.append(TypeAliasSymbol(kind="type_alias", fqn=f"{owner_fqn}.{name}", target=target))
+                        out.append(TypeAliasSymbol(kind="type_alias", fqn=f"{owner_fqn}.{name}", location=get_loc(small), target=target))
                     else:
                         type_str = ann_str
                         value_str = _EMPTY_MODULE.code_for_node(small.value) if small.value is not None else None
                         vis = _determine_visibility(name, exported_names if owner_fqn == module_fqn else None)
-                        out.append(_constant_from_assign(name, owner_fqn, type_str, value_str, vis))
+                        out.append(_constant_from_assign(name, owner_fqn, type_str, value_str, vis, get_loc, small))
             elif isinstance(small, cst.Assign):
                 # Only handle single-target simple names for constants
                 if len(small.targets) == 1 and isinstance(small.targets[0].target, cst.Name):
                     name = small.targets[0].target.value
                     value_str = _EMPTY_MODULE.code_for_node(small.value)
                     vis = _determine_visibility(name, exported_names if owner_fqn == module_fqn else None)
-                    out.append(_constant_from_assign(name, owner_fqn, None, value_str, vis))
+                    out.append(_constant_from_assign(name, owner_fqn, None, value_str, vis, get_loc, small))
 
     for stmt in module.body:
         if isinstance(stmt, cst.FunctionDef):
@@ -232,6 +256,7 @@ def extract_module(module: cst.Module, module_fqn: str) -> tuple[Symbol, ...]:
             cls = ClassSymbol(
                 kind="class",
                 fqn=cls_fqn,
+                location=get_loc(stmt),
                 docstring=stmt.get_docstring(),
                 decorators=decorators,
                 visibility=_determine_visibility(stmt.name.value),
@@ -255,7 +280,7 @@ def extract_module(module: cst.Module, module_fqn: str) -> tuple[Symbol, ...]:
             alias_name = stmt.name.value
             target = _EMPTY_MODULE.code_for_node(stmt.value)
             out.append(
-                TypeAliasSymbol(kind="type_alias", fqn=f"{module_fqn}.{alias_name}", target=target)
+                TypeAliasSymbol(kind="type_alias", fqn=f"{module_fqn}.{alias_name}", location=get_loc(stmt), target=target)
             )
 
     symbols: tuple[Symbol, ...] = tuple(sorted(out, key=lambda s: s.fqn))

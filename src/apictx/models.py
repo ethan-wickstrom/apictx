@@ -8,12 +8,23 @@ from typing import Literal
 class Parameter:
     name: str
     type: str
+    kind: Literal["posonly", "pos", "kwonly", "vararg", "kwvar"]
+    default: str | None
+    required: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Location:
+    path: str
+    line: int
+    column: int
 
 
 @dataclass(frozen=True, slots=True)
 class Symbol:
     kind: str
     fqn: str
+    location: Location
 
 
 @dataclass(frozen=True, slots=True)
