@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict, replace
 from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
-from typing import Iterator, Mapping
+from typing import Iterator, Mapping, Dict, Tuple
 
 import jsonschema
 import libcst as cst
@@ -18,6 +18,8 @@ from .models import ClassSymbol, ConstantSymbol, FunctionSymbol, Symbol
 from .result import Result
 from .schema import load_schema
 
+
+_EMPTY_MODULE: cst.Module = cst.Module([])
 
 STAGES: tuple[str, ...] = (
     "Discover",
@@ -69,9 +71,57 @@ def extract(parsed: Mapping[Path, cst.Module], root: Path, package: str) -> tupl
     return symbols
 
 
-def link(symbols: tuple[Symbol, ...]) -> tuple[Symbol, ...]:
+def _module_fqn_for(path: Path, root: Path, package: str) -> str:
+    return ".".join((package, *path.relative_to(root).with_suffix("").parts))
+
+
+def build_import_tables(parsed: Mapping[Path, cst.Module], root: Path, package: str) -> Dict[str, Dict[str, str]]:
+    tables: Dict[str, Dict[str, str]] = {}
+    for path, module in parsed.items():
+        mod_fqn = _module_fqn_for(path, root, package)
+        table: Dict[str, str] = {}
+        for stmt in module.body:
+            if isinstance(stmt, cst.SimpleStatementLine):
+                for small in stmt.body:
+                    if isinstance(small, cst.Import):
+                        for alias in small.names:
+                            full = _EMPTY_MODULE.code_for_node(alias.name)
+                            asname = full
+                            if alias.asname is not None:
+                                asname = alias.asname.name.value
+                            else:
+                                # expose top-level name as shorthand
+                                asname = full.split(".")[-1]
+                            table[asname] = full
+                    elif isinstance(small, cst.ImportFrom):
+                        # compute base module fqn considering relative import dots
+                        base_module = ""
+                        rel = 0
+                        if small.relative:
+                            rel = len(tuple(small.relative))
+                        # current package parts (drop module leaf)
+                        pkg_parts = mod_fqn.split(".")[:-1]
+                        if rel > 0:
+                            ascend = max(0, rel - 1)
+                            pkg_parts = pkg_parts[: max(0, len(pkg_parts) - ascend)]
+                        if small.module is not None:
+                            mod_part = _EMPTY_MODULE.code_for_node(small.module)
+                            base_module = ".".join((*pkg_parts, *mod_part.split(".")))
+                        else:
+                            base_module = ".".join(pkg_parts)
+                        for alias in small.names:
+                            name = _EMPTY_MODULE.code_for_node(alias.name)
+                            target = f"{base_module}.{name}" if base_module else name
+                            local = alias.asname.name.value if alias.asname is not None else name
+                            table[local] = target
+        tables[mod_fqn] = table
+    return tables
+
+
+def link(symbols: tuple[Symbol, ...], import_tables: Dict[str, Dict[str, str]]) -> tuple[Symbol, ...]:
     # map simple name -> sorted fqns
     name_to_fqns: dict[str, tuple[str, ...]] = {}
+    class_fqns: set[str] = {s.fqn for s in symbols if isinstance(s, ClassSymbol)}
     for s in symbols:
         name = s.fqn.split(".")[-1]
         name_to_fqns.setdefault(name, tuple())
@@ -81,14 +131,49 @@ def link(symbols: tuple[Symbol, ...]) -> tuple[Symbol, ...]:
         name_to_fqns[name] = tuple(vals)
 
     linked: list[Symbol] = []
+    def _resolve_base(base_txt: str, current_mod: str) -> str | None:
+        txt = base_txt.strip()
+        # strip generics like typing.Generic[T]
+        head = txt.split("[", 1)[0]
+        parts = head.split(".") if head else []
+        if not parts:
+            return None
+        alias_map = import_tables.get(current_mod, {})
+        # qualified name
+        if len(parts) > 1:
+            first = parts[0]
+            rest = parts[1:]
+            target = alias_map.get(first)
+            if target:
+                candidate = ".".join((target, *rest)) if rest else target
+                return candidate if candidate in class_fqns else None
+            # already fully qualified
+            if head in class_fqns:
+                return head
+        else:
+            # unqualified: prefer same module first
+            simple = parts[0]
+            same_mod_candidate = f"{current_mod}.{simple}"
+            if same_mod_candidate in class_fqns:
+                return same_mod_candidate
+            # via import alias mapping
+            target = alias_map.get(simple)
+            if target and target in class_fqns:
+                return target
+            # fallback to global name mapping
+            matches = name_to_fqns.get(simple, ())
+            if matches:
+                return matches[0]
+        return None
+
     for s in symbols:
         if isinstance(s, ClassSymbol):
             resolved: list[str] = []
+            current_mod = s.fqn.rsplit(".", 1)[0]
             for b in s.bases:
-                candidate_name = b.split(".")[-1].strip()
-                matches = name_to_fqns.get(candidate_name, ())
-                if matches:
-                    resolved.append(matches[0])  # pick lexicographically first for stability
+                cand = _resolve_base(b, current_mod)
+                if cand:
+                    resolved.append(cand)
             linked.append(replace(s, base_fqns=tuple(sorted(set(resolved)))))
         else:
             linked.append(s)
@@ -277,7 +362,8 @@ def run_pipeline(root: Path, package: str, version: str, commit: str, workers: i
     if parse_errors:
         return Result.failure(tuple(parse_errors))
     symbols: tuple[Symbol, ...] = extract(modules, root, package)
-    linked: tuple[Symbol, ...] = link(symbols)
+    import_tables = build_import_tables(modules, root, package)
+    linked: tuple[Symbol, ...] = link(symbols, import_tables)
     validated: Result[ValidationOutput, tuple[Error, ...]] = validate(linked)
     if not validated.ok or validated.value is None:
         return Result.failure(validated.error if validated.error is not None else tuple())

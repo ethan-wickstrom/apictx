@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterator, Literal
+from typing import Iterator, Literal, Set
 from itertools import chain
 
 import libcst as cst
@@ -18,7 +18,9 @@ from .models import (
 _EMPTY_MODULE: cst.Module = cst.Module([])
 
 
-def _determine_visibility(name: str) -> Literal["public", "private"]:
+def _determine_visibility(name: str, exported: Set[str] | None = None) -> Literal["public", "private"]:
+    if exported is not None:
+        return "public" if name in exported else "private"
     return "private" if name.startswith("_") else "public"
 
 
@@ -80,7 +82,7 @@ def _parse_docstring_raises(doc: str | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
-def _function_from_def(defn: cst.FunctionDef, parent_fqn: str | None, module_fqn: str) -> FunctionSymbol:
+def _function_from_def(defn: cst.FunctionDef, parent_fqn: str | None, module_fqn: str, exported: Set[str] | None) -> FunctionSymbol:
     owner: str | None = parent_fqn
     base_fqn: str = f"{module_fqn}.{defn.name.value}" if owner is None else f"{owner}.{defn.name.value}"
     params: tuple[Parameter, ...] = tuple(map(_parameter_from_node, _iter_parameters(defn)))
@@ -89,7 +91,7 @@ def _function_from_def(defn: cst.FunctionDef, parent_fqn: str | None, module_fqn
         returns = _EMPTY_MODULE.code_for_node(defn.returns.annotation)
     doc: str | None = defn.get_docstring()
     decorators: tuple[str, ...] = tuple(map(_decorator_to_str, defn.decorators))
-    visibility: Literal["public", "private"] = _determine_visibility(defn.name.value)
+    visibility: Literal["public", "private"] = _determine_visibility(defn.name.value, None if owner is not None else exported)
     deprecated: bool = any("deprecated" in deco for deco in decorators)
     is_property: bool = any(d.split("(")[0].endswith("property") for d in decorators)
     is_classmethod: bool = any(d.split("(")[0].endswith("classmethod") for d in decorators)
@@ -145,7 +147,7 @@ def _is_protocol_class(bases: tuple[str, ...]) -> bool:
     return any(b.endswith("typing.protocol") or b.endswith("protocol") for b in lowered)
 
 
-def _constant_from_assign(name: str, owner_fqn: str, type_str: str | None, value_str: str | None) -> ConstantSymbol:
+def _constant_from_assign(name: str, owner_fqn: str, type_str: str | None, value_str: str | None, visibility: Literal["public", "private"]) -> ConstantSymbol:
     fqn: str = f"{owner_fqn}.{name}"
     return ConstantSymbol(
         kind="constant",
@@ -153,7 +155,7 @@ def _constant_from_assign(name: str, owner_fqn: str, type_str: str | None, value
         owner=owner_fqn,
         type=type_str,
         value=value_str,
-        visibility=_determine_visibility(name),
+        visibility=visibility,
         deprecated=False,
     )
 
@@ -162,10 +164,40 @@ def extract_module(module: cst.Module, module_fqn: str) -> tuple[Symbol, ...]:
     module_doc: str | None = module.get_docstring()
     mod_symbol: ModuleSymbol = ModuleSymbol(kind="module", fqn=module_fqn, docstring=module_doc)
 
+    # collect __all__ if present: only literal list/tuple of string constants
+    def _collect_exports(mod: cst.Module) -> Set[str] | None:
+        exports: set[str] = set()
+        found: bool = False
+        for stmt in mod.body:
+            if isinstance(stmt, cst.SimpleStatementLine):
+                for small in stmt.body:
+                    if isinstance(small, cst.Assign):
+                        # handle "__all__ = ["a", "b"]" or tuple
+                        for target in small.targets:
+                            if isinstance(target.target, cst.Name) and target.target.value == "__all__":
+                                value = small.value
+                                elements: list[cst.Element] | None = None
+                                if isinstance(value, cst.List):
+                                    elements = value.elements
+                                elif isinstance(value, cst.Tuple):
+                                    elements = value.elements
+                                if elements is not None:
+                                    for elt in elements:
+                                        node = elt.value
+                                        if isinstance(node, cst.SimpleString):
+                                            text = node.value
+                                            # strip quotes for simple cases
+                                            if len(text) >= 2 and text[0] in {'"', "'"} and text[-1] == text[0]:
+                                                exports.add(text[1:-1])
+                                    found = True
+        return exports if found else None
+
+    exported_names: Set[str] | None = _collect_exports(module)
+
     out: list[Symbol] = [mod_symbol]
 
     def handle_function(defn: cst.FunctionDef, parent_fqn: str | None) -> None:
-        out.append(_function_from_def(defn, parent_fqn, module_fqn))
+        out.append(_function_from_def(defn, parent_fqn, module_fqn, exported_names))
 
     def handle_simple_stmt(stmt: cst.SimpleStatementLine, owner_fqn: str) -> None:
         for small in stmt.body:
@@ -180,13 +212,15 @@ def extract_module(module: cst.Module, module_fqn: str) -> tuple[Symbol, ...]:
                     else:
                         type_str = ann_str
                         value_str = _EMPTY_MODULE.code_for_node(small.value) if small.value is not None else None
-                        out.append(_constant_from_assign(name, owner_fqn, type_str, value_str))
+                        vis = _determine_visibility(name, exported_names if owner_fqn == module_fqn else None)
+                        out.append(_constant_from_assign(name, owner_fqn, type_str, value_str, vis))
             elif isinstance(small, cst.Assign):
                 # Only handle single-target simple names for constants
                 if len(small.targets) == 1 and isinstance(small.targets[0].target, cst.Name):
                     name = small.targets[0].target.value
                     value_str = _EMPTY_MODULE.code_for_node(small.value)
-                    out.append(_constant_from_assign(name, owner_fqn, None, value_str))
+                    vis = _determine_visibility(name, exported_names if owner_fqn == module_fqn else None)
+                    out.append(_constant_from_assign(name, owner_fqn, None, value_str, vis))
 
     for stmt in module.body:
         if isinstance(stmt, cst.FunctionDef):
