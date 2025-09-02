@@ -93,3 +93,16 @@ Follow this protocol when preparing to commit code changes.
 3. Review staged changes: Run `git diff --cached`.
 4. Create commit message: Follow Conventional Commits pattern ("type(scope): description"). Detail complex changes in the commit body.
 5. Verify commit: Run `git log -1 --stat`.
+
+# Analyzing Code and Identifying Patterns
+
+Start by inventorying the codebase using `rg --files` to list all files, filtering by directory or extension as needed. Search for structural patterns, anti-patterns, and repetitive code blocks using precise `rg` queries. Focus on high-impact areas such as core logic, shared utilities, and frequently modified files.
+
+Cross-reference findings with version control history to assess context. Use `git blame` on critical files to identify ownership, change frequency, and potential technical debt hotspots. Check test coverage for impacted components by searching for corresponding test files or test functions.
+
+Use insights for actionable recommendations. Prioritize based on impact, linking each suggestion to specific files, functions, or lines. For example:
+- Replace duplicated logic in `utils/data_processing.py` (lines 15-30) with a shared helper function.
+- Standardize error handling in `api/endpoints/` by adopting the pattern used in `api/users.py`.
+- Break down monolithic functions exceeding 50 lines, starting with `services/report_generator.py:process_data()`.
+
+Document patterns and recommendations in an ADR `.md` file in a `docs/` folder, ensuring traceability to the original code locations. Use these insights to guide refactoring, inform new feature design, and improve maintainability. Validate proposals by verifying consistency with existing conventions and testing strategies.
