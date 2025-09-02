@@ -84,3 +84,12 @@ uv automatically loads `.env` files with `uv run --env-file .env` or by default 
 - Use `--compile-bytecode` for faster imports
 
 For more information, see https://docs.astral.sh/uv/
+
+# Writing Commit Messages
+
+Follow this protocol when preparing to commit code changes.
+1. Identify changes: Run `git status`.
+2. Validate changes: Apply appropriate syntax checks (e.g., `uv run -m py_compile [file]`, `bash -n [file]`) and run relevant tests (e.g., `uv run pytest`) for all modified files. If validation fails, fix the issues.
+3. Review staged changes: Run `git diff --cached`.
+4. Create commit message: Follow Conventional Commits pattern ("type(scope): description"). Detail complex changes in the commit body.
+5. Verify commit: Run `git log -1 --stat`.
