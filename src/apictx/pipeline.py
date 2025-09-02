@@ -195,6 +195,45 @@ def index(objs: tuple[dict[str, object], ...], db_path: Path) -> Result[None, Er
         return Result.failure(Error(code="index", message=str(exc), path=str(db_path)))
 
 
+def query_index(
+    db_path: Path,
+    *,
+    fqn: str | None = None,
+    approx: str | None = None,
+    limit: int = 10,
+) -> Result[tuple[dict[str, object], ...], Error]:
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        rows: list[tuple[str]] = []
+        if fqn:
+            row = cur.execute("SELECT data FROM symbols WHERE fqn = ?", (fqn,)).fetchone()
+            if row:
+                rows = [row]
+        elif approx:
+            grams = _to_grams(approx)
+            if grams:
+                placeholders = ",".join(["?"] * len(grams))
+                sql = (
+                    "SELECT s.data, COUNT(*) as score FROM grams g JOIN symbols s ON s.id = g.id "
+                    f"WHERE g.gram IN ({placeholders}) GROUP BY s.id ORDER BY score DESC, s.fqn ASC LIMIT ?"
+                )
+                rows = cur.execute(sql, [*grams, limit]).fetchall()
+        conn.close()
+        objs: list[dict[str, object]] = []
+        for row in rows:
+            data_str = row[0] if len(row) >= 1 else None
+            if not isinstance(data_str, str):
+                continue
+            try:
+                objs.append(json.loads(data_str))
+            except Exception:
+                continue
+        return Result.success(tuple(objs))
+    except Exception as exc:  # noqa: BLE001
+        return Result.failure(Error(code="query", message=str(exc), path=str(db_path)))
+
+
 @dataclass(frozen=True, slots=True)
 class Manifest:
     package: str
