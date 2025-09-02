@@ -50,6 +50,12 @@ def _parse_worker(path_str: str) -> tuple[str, Result[cst.Module, Error]]:
 
 def parse(paths: tuple[Path, ...], workers: int) -> Mapping[Path, Result[cst.Module, Error]]:
     path_strings: tuple[str, ...] = tuple(str(p) for p in paths)
+    if workers <= 1:
+        out: dict[Path, Result[cst.Module, Error]] = {}
+        for p in path_strings:
+            k, v = _parse_worker(p)
+            out[Path(k)] = v
+        return out
     with ProcessPoolExecutor(max_workers=workers) as pool:
         pairs_iter: Iterator[tuple[str, Result[cst.Module, Error]]] = pool.map(
             _parse_worker, path_strings
