@@ -7,7 +7,7 @@ T = TypeVar("T")
 E = TypeVar("E")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Result(Generic[T, E]):
     ok: bool
     value: T | None
