@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict, replace
 from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
-from typing import Iterator, Mapping, Dict, Tuple
+from typing import Iterator, Mapping, Dict
 
 import jsonschema
 import libcst as cst

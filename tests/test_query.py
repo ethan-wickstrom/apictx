@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import json
 
 from apictx.pipeline import run_pipeline, query_index
 from apictx.result import Result

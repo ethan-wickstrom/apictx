@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Iterator, Literal, Set
-from itertools import chain
 import re
 
 import libcst as cst
