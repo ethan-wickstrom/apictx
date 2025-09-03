@@ -209,23 +209,24 @@ def _constant_from_assign(name: str, owner_fqn: str, type_str: str | None, value
 
 
 def extract_module(module: cst.Module, module_fqn: str, module_path: str | None = None) -> tuple[Symbol, ...]:
-    module_doc: str | None = module.get_docstring()
     from libcst.metadata import PositionProvider
     wrapper = cst.MetadataWrapper(module)
     pos_map = wrapper.resolve(PositionProvider)
+    mod: cst.Module = wrapper.module
+    module_doc: str | None = mod.get_docstring()
 
     path_str: str = module_path if module_path is not None else module_fqn
 
     def get_loc(node: cst.CSTNode) -> Location:
         try:
-            pos = pos_map.get(node)
+            pos = pos_map[node]
             if pos is None:
                 return Location(path=path_str, line=1, column=0)
             return Location(path=path_str, line=int(pos.start.line), column=int(pos.start.column))
         except Exception:
             return Location(path=path_str, line=1, column=0)
 
-    mod_symbol: ModuleSymbol = ModuleSymbol(kind="module", fqn=module_fqn, location=get_loc(module), docstring=module_doc)
+    mod_symbol: ModuleSymbol = ModuleSymbol(kind="module", fqn=module_fqn, location=get_loc(mod), docstring=module_doc)
 
     # collect __all__ if present: only literal list/tuple of string constants
     def _collect_exports(mod: cst.Module) -> Set[str] | None:
@@ -249,13 +250,30 @@ def extract_module(module: cst.Module, module_fqn: str, module_path: str | None 
                                         node = elt.value
                                         if isinstance(node, cst.SimpleString):
                                             text = node.value
-                                            # strip quotes for simple cases
+                                            if len(text) >= 2 and text[0] in {'"', "'"} and text[-1] == text[0]:
+                                                exports.add(text[1:-1])
+                                    found = True
+                    elif isinstance(small, cst.AnnAssign):
+                        # handle "__all__: tuple[...] = ("a", ...)"
+                        if isinstance(small.target, cst.Name) and small.target.value == "__all__":
+                            value = small.value
+                            if value is not None:
+                                elements: list[cst.Element] | None = None
+                                if isinstance(value, cst.List):
+                                    elements = value.elements
+                                elif isinstance(value, cst.Tuple):
+                                    elements = value.elements
+                                if elements is not None:
+                                    for elt in elements:
+                                        node = elt.value
+                                        if isinstance(node, cst.SimpleString):
+                                            text = node.value
                                             if len(text) >= 2 and text[0] in {'"', "'"} and text[-1] == text[0]:
                                                 exports.add(text[1:-1])
                                     found = True
         return exports if found else None
 
-    exported_names: Set[str] | None = _collect_exports(module)
+    exported_names: Set[str] | None = _collect_exports(mod)
 
     out: list[Symbol] = [mod_symbol]
 
@@ -284,7 +302,7 @@ def extract_module(module: cst.Module, module_fqn: str, module_path: str | None 
                     vis = _determine_visibility(name, exported_names if owner_fqn == module_fqn else None)
                     out.append(_constant_from_assign(name, owner_fqn, None, value_str, vis, get_loc, small))
 
-    for stmt in module.body:
+    for stmt in mod.body:
         if isinstance(stmt, cst.FunctionDef):
             handle_function(stmt, None)
         elif isinstance(stmt, cst.ClassDef):
