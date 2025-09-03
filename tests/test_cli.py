@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,7 +9,6 @@ import typer
 from typer.testing import CliRunner
 
 from apictx.cli import app, _detect_package_name, _detect_package_version, _resolve_source
-from apictx.pipeline import run_pipeline
 from apictx.result import Result
 from apictx.errors import Error
 
@@ -102,7 +100,7 @@ class TestDetectPackageVersion:
         """Test that None is returned when no version is found."""
         pkg_dir = tmp_path / "mypackage"
         pkg_dir.mkdir()
-        (pkg_dir / "__init__.py").write_text("# No version here', encoding="utf-8")
+        (pkg_dir / "__init__.py").write_text("# No version here", encoding="utf-8")
         
         result = _detect_package_version(tmp_path, "mypackage")
         assert result is None
