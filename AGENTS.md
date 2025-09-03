@@ -884,3 +884,14 @@ Matchers are provided as a way of asking whether a particular LibCST node and it
 
 To accomplish this, a matcher has been created which corresponds to each LibCST node documented in `libcst-nodes`. Matchers default each of their attributes to the special sentinel matcher `~libcst.matchers.DoNotCare`. When constructing a matcher, you can initialize the node with only the values of attributes that you are concerned with, leaving the rest of the attributes set to `~libcst.matchers.DoNotCare` in order to skip comparing against them.
 
+# IMPORTANT: Complete File Review Required Before Code Implementation
+
+Read this entire file from beginning to end before writing any code in this repository. Verify completion of your reading by confirming you have encountered and understood all sections including Python package management with uv, commit message conventions, code analysis patterns, Python functional programming concepts, and LibCST usage guidelines.
+
+Begin at the file's first line and continue through every section without skipping. Pay particular attention to the uv tool instructions that replace pip, virtualenv, poetry, and pyenv. Understand the conventional commits pattern for type, scope, and description. Absorb the code analysis methodology using rg and git blame. Study the iterator patterns, generator expressions, and functional programming constructs. Master the LibCST visitor patterns and tree modification techniques.
+
+Confirm your reading by mentally checking these knowledge points: You know to use `uv run` instead of `python`. You understand when to use feat versus fix versus docs commit types. You can identify when to apply itertools functions versus writing explicit loops. You recognize why LibCST's updated_node should be preferred over original_node in transformers. You understand the difference between list comprehensions and generator expressions for memory efficiency.
+
+Complete this verification before creating, modifying, or reviewing any code files. The repository's patterns, conventions, and tooling requirements depend on understanding these foundations. Code written without this knowledge will likely violate established patterns, use incorrect tools, or miss critical implementation requirements.
+
+Return to the beginning if any section remains unclear. Each section builds conceptual dependencies that later code will require. Full comprehension of all material ensures your code contributions align with repository standards and leverage the prescribed tools effectively.
