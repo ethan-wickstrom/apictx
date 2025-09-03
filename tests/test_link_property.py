@@ -20,11 +20,15 @@ def test_class_linkage_base_resolution(base_name: str, tmp_path: Path) -> None:
         encoding="utf-8",
     )
     out: Path = tmp_path / "out"
-    res: Result[None, tuple[Error, ...]] = run_pipeline(root, "pkg", "0.0.1", "abc", 1, out)
+    res: Result[None, tuple[Error, ...]] = run_pipeline(
+        root, "pkg", "0.0.1", "abc", 1, out
+    )
     assert res.ok
 
     # validation report should have zero missing references
-    report: dict[str, object] = json.loads((out / "validation.json").read_text(encoding="utf-8"))
+    report: dict[str, object] = json.loads(
+        (out / "validation.json").read_text(encoding="utf-8")
+    )
     assert int(report.get("missing_references", 0)) == 0
 
     # query subclass and assert its base_fqns includes the base class fqn

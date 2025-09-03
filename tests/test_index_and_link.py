@@ -21,11 +21,7 @@ def test_link_and_index(tmp_path: Path) -> None:
     _write(
         pkg,
         "processor.py",
-        (
-            "class Processor:\n"
-            "    def process(self, path: str) -> None:\n"
-            "        pass\n"
-        ),
+        ("class Processor:\n    def process(self, path: str) -> None:\n        pass\n"),
     )
     _write(
         pkg,
@@ -37,14 +33,16 @@ def test_link_and_index(tmp_path: Path) -> None:
             "    def process(self, path: str) -> None:\n"
             "        pass\n\n"
             "    def validate_schema(self) -> None:\n"
-            "        \"\"\"Raises:\n"
+            '        """Raises:\n'
             "        ValidationError: when schema invalid\n"
-            "        \"\"\"\n"
+            '        """\n'
             "        raise ValidationError('boom')\n"
         ),
     )
     outdir: Path = tmp_path / "out"
-    res: Result[None, tuple[Error, ...]] = run_pipeline(pkg, "data_processor", "0.1.0", "abcdef", 1, outdir)
+    res: Result[None, tuple[Error, ...]] = run_pipeline(
+        pkg, "data_processor", "0.1.0", "abcdef", 1, outdir
+    )
     assert res.ok
 
     # Validation report asserts closure
@@ -82,4 +80,3 @@ def test_link_and_index(tmp_path: Path) -> None:
     conn.close()
     assert best is not None
     assert best[0].endswith("CSVProcessor")
-

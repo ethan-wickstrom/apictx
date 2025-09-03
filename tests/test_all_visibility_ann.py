@@ -18,10 +18,26 @@ def test_module_all_controls_visibility_with_annassign() -> None:
     )
     mod = cst.parse_module(src)
     symbols: tuple[Symbol, ...] = extract_module(mod, "pkg.m")
-    ef = next(s for s in symbols if isinstance(s, FunctionSymbol) and s.fqn.endswith(".exported_fun"))
-    inf = next(s for s in symbols if isinstance(s, FunctionSymbol) and s.fqn.endswith(".internal_fun"))
-    ec = next(s for s in symbols if isinstance(s, ConstantSymbol) and s.fqn.endswith(".EXPORTED_CONST"))
-    ic = next(s for s in symbols if isinstance(s, ConstantSymbol) and s.fqn.endswith(".INTERNAL_CONST"))
+    ef = next(
+        s
+        for s in symbols
+        if isinstance(s, FunctionSymbol) and s.fqn.endswith(".exported_fun")
+    )
+    inf = next(
+        s
+        for s in symbols
+        if isinstance(s, FunctionSymbol) and s.fqn.endswith(".internal_fun")
+    )
+    ec = next(
+        s
+        for s in symbols
+        if isinstance(s, ConstantSymbol) and s.fqn.endswith(".EXPORTED_CONST")
+    )
+    ic = next(
+        s
+        for s in symbols
+        if isinstance(s, ConstantSymbol) and s.fqn.endswith(".INTERNAL_CONST")
+    )
     assert ef.visibility == "public"
     assert ec.visibility == "public"
     assert inf.visibility == "private"

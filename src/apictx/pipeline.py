@@ -48,7 +48,9 @@ def _parse_worker(path_str: str) -> tuple[str, Result[cst.Module, Error]]:
         return path_str, Result.failure(err)
 
 
-def parse(paths: tuple[Path, ...], workers: int) -> Mapping[Path, Result[cst.Module, Error]]:
+def parse(
+    paths: tuple[Path, ...], workers: int
+) -> Mapping[Path, Result[cst.Module, Error]]:
     path_strings: tuple[str, ...] = tuple(str(p) for p in paths)
     if workers <= 1:
         out: dict[Path, Result[cst.Module, Error]] = {}
@@ -63,7 +65,9 @@ def parse(paths: tuple[Path, ...], workers: int) -> Mapping[Path, Result[cst.Mod
         return {Path(p): res for p, res in pairs_iter}
 
 
-def extract(parsed: Mapping[Path, cst.Module], root: Path, package: str) -> tuple[Symbol, ...]:
+def extract(
+    parsed: Mapping[Path, cst.Module], root: Path, package: str
+) -> tuple[Symbol, ...]:
     fragments: Iterator[tuple[Symbol, ...]] = (
         extract_module(
             module,
@@ -82,7 +86,9 @@ def _module_fqn_for(path: Path, root: Path, package: str) -> str:
     return ".".join((package, *path.relative_to(root).with_suffix("").parts))
 
 
-def build_import_tables(parsed: Mapping[Path, cst.Module], root: Path, package: str) -> Dict[str, Dict[str, str]]:
+def build_import_tables(
+    parsed: Mapping[Path, cst.Module], root: Path, package: str
+) -> Dict[str, Dict[str, str]]:
     tables: Dict[str, Dict[str, str]] = {}
     for path, module in parsed.items():
         mod_fqn = _module_fqn_for(path, root, package)
@@ -119,13 +125,19 @@ def build_import_tables(parsed: Mapping[Path, cst.Module], root: Path, package: 
                         for alias in small.names:
                             name = _EMPTY_MODULE.code_for_node(alias.name)
                             target = f"{base_module}.{name}" if base_module else name
-                            local = alias.asname.name.value if alias.asname is not None else name
+                            local = (
+                                alias.asname.name.value
+                                if alias.asname is not None
+                                else name
+                            )
                             table[local] = target
         tables[mod_fqn] = table
     return tables
 
 
-def link(symbols: tuple[Symbol, ...], import_tables: Dict[str, Dict[str, str]]) -> tuple[Symbol, ...]:
+def link(
+    symbols: tuple[Symbol, ...], import_tables: Dict[str, Dict[str, str]]
+) -> tuple[Symbol, ...]:
     # map simple name -> sorted fqns
     name_to_fqns: dict[str, tuple[str, ...]] = {}
     class_fqns: set[str] = {s.fqn for s in symbols if isinstance(s, ClassSymbol)}
@@ -138,6 +150,7 @@ def link(symbols: tuple[Symbol, ...], import_tables: Dict[str, Dict[str, str]]) 
         name_to_fqns[name] = tuple(vals)
 
     linked: list[Symbol] = []
+
     def _resolve_base(base_txt: str, current_mod: str) -> str | None:
         txt = base_txt.strip()
         # strip generics like typing.Generic[T]
@@ -199,7 +212,9 @@ class ValidationOutput:
     report: ValidationReport
 
 
-def validate(symbols: tuple[Symbol, ...]) -> Result[ValidationOutput, tuple[Error, ...]]:
+def validate(
+    symbols: tuple[Symbol, ...],
+) -> Result[ValidationOutput, tuple[Error, ...]]:
     schema: Mapping[str, object] = load_schema()
     objs: list[dict[str, object]] = []
     errors: list[Error] = []
@@ -208,7 +223,9 @@ def validate(symbols: tuple[Symbol, ...]) -> Result[ValidationOutput, tuple[Erro
     missing_refs_count: int = 0
     for symbol in symbols:
         if symbol.fqn in seen:
-            errors.append(Error(code="duplicate", message="duplicate fqn", path=symbol.fqn))
+            errors.append(
+                Error(code="duplicate", message="duplicate fqn", path=symbol.fqn)
+            )
             continue
         seen.add(symbol.fqn)
         raw: dict[str, object] = asdict(symbol)
@@ -223,19 +240,39 @@ def validate(symbols: tuple[Symbol, ...]) -> Result[ValidationOutput, tuple[Erro
         if isinstance(symbol, FunctionSymbol) and symbol.owner is not None:
             if symbol.owner not in fqn_set:
                 missing_refs_count += 1
-                errors.append(Error(code="missing_ref", message="owner not found", path=f"{symbol.fqn} -> {symbol.owner}"))
+                errors.append(
+                    Error(
+                        code="missing_ref",
+                        message="owner not found",
+                        path=f"{symbol.fqn} -> {symbol.owner}",
+                    )
+                )
         if isinstance(symbol, ConstantSymbol):
             if symbol.owner not in fqn_set:
                 missing_refs_count += 1
-                errors.append(Error(code="missing_ref", message="owner not found", path=f"{symbol.fqn} -> {symbol.owner}"))
+                errors.append(
+                    Error(
+                        code="missing_ref",
+                        message="owner not found",
+                        path=f"{symbol.fqn} -> {symbol.owner}",
+                    )
+                )
         if isinstance(symbol, ClassSymbol):
             for base in symbol.base_fqns:
                 if base not in fqn_set:
                     missing_refs_count += 1
-                    errors.append(Error(code="missing_ref", message="base not found", path=f"{symbol.fqn} -> {base}"))
+                    errors.append(
+                        Error(
+                            code="missing_ref",
+                            message="base not found",
+                            path=f"{symbol.fqn} -> {base}",
+                        )
+                    )
     if errors:
         return Result.failure(tuple(errors))
-    report: ValidationReport = ValidationReport(symbol_count=len(objs), missing_references=missing_refs_count)
+    report: ValidationReport = ValidationReport(
+        symbol_count=len(objs), missing_references=missing_refs_count
+    )
     output: ValidationOutput = ValidationOutput(objects=tuple(objs), report=report)
     return Result.success(output)
 
@@ -279,7 +316,10 @@ def index(objs: tuple[dict[str, object], ...], db_path: Path) -> Result[None, Er
                 )
                 cur.execute("DELETE FROM grams WHERE id = ?", (sid,))
             grams = set(_to_grams(name)) | set(_to_grams(fqn))
-            cur.executemany("INSERT INTO grams (gram, id) VALUES (?, ?)", [(g, sid) for g in sorted(grams)])
+            cur.executemany(
+                "INSERT INTO grams (gram, id) VALUES (?, ?)",
+                [(g, sid) for g in sorted(grams)],
+            )
         conn.commit()
         conn.close()
         return Result.success(None)
@@ -302,7 +342,9 @@ def query_index(
         cur = conn.cursor()
         rows: list[tuple[str]] = []
         if fqn:
-            row = cur.execute("SELECT data FROM symbols WHERE fqn = ?", (fqn,)).fetchone()
+            row = cur.execute(
+                "SELECT data FROM symbols WHERE fqn = ?", (fqn,)
+            ).fetchone()
             if row:
                 rows = [row]
         elif approx:
@@ -354,7 +396,12 @@ class Manifest:
     schema_version: str
 
 
-def emit(objs: tuple[dict[str, object], ...], manifest: Manifest, report: ValidationReport, outdir: Path) -> Result[None, Error]:
+def emit(
+    objs: tuple[dict[str, object], ...],
+    manifest: Manifest,
+    report: ValidationReport,
+    outdir: Path,
+) -> Result[None, Error]:
     try:
         outdir.mkdir(parents=True, exist_ok=True)
         jsonl_path: Path = outdir / "symbols.jsonl"
@@ -373,7 +420,9 @@ def emit(objs: tuple[dict[str, object], ...], manifest: Manifest, report: Valida
         return Result.failure(Error(code="emit", message=str(exc), path=str(outdir)))
 
 
-def run_pipeline(root: Path, package: str, version: str, commit: str, workers: int, outdir: Path) -> Result[None, tuple[Error, ...]]:
+def run_pipeline(
+    root: Path, package: str, version: str, commit: str, workers: int, outdir: Path
+) -> Result[None, tuple[Error, ...]]:
     paths: tuple[Path, ...] = discover(root)
     parsed_map: Mapping[Path, Result[cst.Module, Error]] = parse(paths, workers)
     modules: dict[Path, cst.Module] = {}
@@ -390,17 +439,22 @@ def run_pipeline(root: Path, package: str, version: str, commit: str, workers: i
     linked: tuple[Symbol, ...] = link(symbols, import_tables)
     validated: Result[ValidationOutput, tuple[Error, ...]] = validate(linked)
     if not validated.ok or validated.value is None:
-        return Result.failure(validated.error if validated.error is not None else tuple())
+        return Result.failure(
+            validated.error if validated.error is not None else tuple()
+        )
     output: ValidationOutput = validated.value
     objs: tuple[dict[str, object], ...] = output.objects
     db_path: Path = outdir / "index.sqlite3"
     idx_res = index(objs, db_path)
     if not idx_res.ok:
-        return Result.failure((idx_res.error,) if idx_res.error is not None else tuple())
+        return Result.failure(
+            (idx_res.error,) if idx_res.error is not None else tuple()
+        )
     # derive schema version from schema file if present
     schema_data = load_schema()
     schema_version = str(schema_data.get("x-apictx-schema-version", "unknown"))
     from . import __version__ as TOOL_VERSION  # local import to avoid cycles at load
+
     manifest: Manifest = Manifest(
         package=package,
         version=version,
@@ -412,5 +466,7 @@ def run_pipeline(root: Path, package: str, version: str, commit: str, workers: i
     )
     emit_res = emit(objs, manifest, output.report, outdir)
     if not emit_res.ok:
-        return Result.failure((emit_res.error,) if emit_res.error is not None else tuple())
+        return Result.failure(
+            (emit_res.error,) if emit_res.error is not None else tuple()
+        )
     return Result.success(None)

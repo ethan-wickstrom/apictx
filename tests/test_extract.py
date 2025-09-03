@@ -10,7 +10,7 @@ from apictx.models import FunctionSymbol, Symbol
 def test_extract_simple_function() -> None:
     source: str = (
         "def add(a: int, b: int) -> int:\n"
-        "    \"Return the sum of a and b.\"\n"
+        '    "Return the sum of a and b."\n'
         "    return a + b\n"
     )
     module: cst.Module = cst.parse_module(source)
@@ -35,15 +35,15 @@ def test_unique_fqn(names: list[str]) -> None:
 def test_extract_module_with_version() -> None:
     """Test that __version__ is extracted as a constant."""
     source: str = (
-        "__version__ = \"1.2.3\"\n\n"
-        "def add(a: int, b: int) -> int:\n"
-        "    return a + b\n"
+        '__version__ = "1.2.3"\n\ndef add(a: int, b: int) -> int:\n    return a + b\n'
     )
     module: cst.Module = cst.parse_module(source)
     symbols: tuple[Symbol, ...] = extract_module(module, "mypkg")
-    
+
     # Check that __version__ is extracted as a constant
-    version_symbols = [s for s in symbols if s.kind == "constant" and s.fqn.endswith(".__version__")]
+    version_symbols = [
+        s for s in symbols if s.kind == "constant" and s.fqn.endswith(".__version__")
+    ]
     assert len(version_symbols) == 1
     version_symbol = version_symbols[0]
     assert version_symbol.value == "1.2.3"

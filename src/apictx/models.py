@@ -55,8 +55,8 @@ class ClassSymbol(Symbol):
     decorators: tuple[str, ...]
     visibility: Literal["public", "private"]
     deprecated: bool
-    bases: tuple[str, ...]               # textual base expressions
-    base_fqns: tuple[str, ...]           # linked FQNs when resolvable
+    bases: tuple[str, ...]  # textual base expressions
+    base_fqns: tuple[str, ...]  # linked FQNs when resolvable
     is_exception: bool
     is_enum: bool
     is_protocol: bool

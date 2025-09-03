@@ -16,12 +16,24 @@ def test_visibility_and_constants() -> None:
     mod = cst.parse_module(src)
     symbols: tuple[Symbol, ...] = extract_module(mod, "pkg.m")
 
-    priv = next(s for s in symbols if isinstance(s, FunctionSymbol) and s.fqn.endswith("._internal"))
-    pub = next(s for s in symbols if isinstance(s, FunctionSymbol) and s.fqn.endswith(".public"))
+    priv = next(
+        s
+        for s in symbols
+        if isinstance(s, FunctionSymbol) and s.fqn.endswith("._internal")
+    )
+    pub = next(
+        s
+        for s in symbols
+        if isinstance(s, FunctionSymbol) and s.fqn.endswith(".public")
+    )
     assert priv.visibility == "private"
     assert pub.visibility == "public"
 
-    val = next(s for s in symbols if isinstance(s, ConstantSymbol) and s.fqn.endswith(".VAL"))
+    val = next(
+        s for s in symbols if isinstance(s, ConstantSymbol) and s.fqn.endswith(".VAL")
+    )
     assert val.visibility == "public"
-    x = next(s for s in symbols if isinstance(s, ConstantSymbol) and s.fqn.endswith(".K._X"))
+    x = next(
+        s for s in symbols if isinstance(s, ConstantSymbol) and s.fqn.endswith(".K._X")
+    )
     assert x.visibility == "private"
